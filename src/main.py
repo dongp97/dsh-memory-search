@@ -15,28 +15,36 @@ DEFAULT_WORKSPACE = Path(r"D:\dsh\workspaces")
 DEFAULT_DB = Path(__file__).parent.parent / "data" / "memory.db"
 
 
+def _resolve_db(args_db: str | None) -> Path:
+    """解析数据库路径"""
+    return Path(args_db) if args_db else DEFAULT_DB
+
+
+def _resolve_path(args_path: str | None) -> Path:
+    """解析工作区路径"""
+    return Path(args_path) if args_path else DEFAULT_WORKSPACE
+
+
 def cmd_index(args: argparse.Namespace) -> None:
     """index 子命令"""
-    db_path = Path(args.db) if args.db else DEFAULT_DB
-    workspace = Path(args.path) if args.path else DEFAULT_WORKSPACE
+    db_path = _resolve_db(args.db)
+    workspace = _resolve_path(args.path)
 
     if not workspace.exists():
         print(f"错误：工作区路径不存在 — {workspace}", file=sys.stderr)
         sys.exit(1)
 
     with Database(db_path) as db:
-        indexer = Indexer(db, workspace)
+        indexer = Indexer(db, workspace, verbose=True)
         stats = indexer.index(force=args.force)
 
-    print(f"索引完成：插入 {stats['inserted']} 条，"
-          f"更新 {stats['updated']} 条，"
-          f"未变 {stats['unchanged']} 条，"
-          f"清理 {stats['removed']} 条")
+    print(f"\n索引完成：插入 {stats['inserted']}，更新 {stats['updated']}，"
+          f"未变 {stats['unchanged']}，清理 {stats['removed']}，失败 {stats['errors']}")
 
 
 def cmd_search(args: argparse.Namespace) -> None:
     """search 子命令"""
-    db_path = Path(args.db) if args.db else DEFAULT_DB
+    db_path = _resolve_db(args.db)
     if not db_path.exists():
         print(f"错误：数据库不存在 — {db_path}，请先运行 'index' 命令", file=sys.stderr)
         sys.exit(1)
@@ -53,6 +61,7 @@ def cmd_search(args: argparse.Namespace) -> None:
                 "title": r.title,
                 "file_path": r.file_path,
                 "rank": round(r.rank, 4),
+                "snippet": r.snippet,
             }
             for r in results
         ]
@@ -61,19 +70,20 @@ def cmd_search(args: argparse.Namespace) -> None:
         if not results:
             print("未找到匹配结果")
             return
-        print(f"找到 {len(results)} 条结果：\n")
+        print(f"\n找到 {len(results)} 条结果：\n")
         for i, r in enumerate(results, 1):
             title = r.title or "(无标题)"
             print(f"  [{i}] {r.session_date} | {title}")
             print(f"      ID: {r.session_id}")
-            print(f"      路径: {r.file_path}")
+            if r.snippet:
+                print(f"      摘要: {r.snippet}")
             print(f"      相关性: {r.rank:.2f}")
             print()
 
 
 def cmd_stats(args: argparse.Namespace) -> None:
     """stats 子命令"""
-    db_path = Path(args.db) if args.db else DEFAULT_DB
+    db_path = _resolve_db(args.db)
     if not db_path.exists():
         print(f"错误：数据库不存在 — {db_path}，请先运行 'index' 命令", file=sys.stderr)
         sys.exit(1)
@@ -82,8 +92,12 @@ def cmd_stats(args: argparse.Namespace) -> None:
     stats = get_stats(db)
     db.close()
 
-    print(f"数据库：{db_path}")
+    size_mb = db_path.stat().st_size / (1024 * 1024)
+
+    print(f"数据库：{db_path} ({size_mb:.1f} MB)")
     print(f"索引会话数：{stats['total_sessions']}")
+    print(f"覆盖日期数：{stats['total_dates']}")
+    print(f"总内容量：{stats['total_chars']:,} 字符")
     if stats['earliest_indexed']:
         earliest = datetime.fromtimestamp(stats['earliest_indexed'])
         print(f"最早索引：{earliest:%Y-%m-%d %H:%M}")
@@ -94,7 +108,7 @@ def cmd_stats(args: argparse.Namespace) -> None:
 
 def cmd_show(args: argparse.Namespace) -> None:
     """show 子命令"""
-    db_path = Path(args.db) if args.db else DEFAULT_DB
+    db_path = _resolve_db(args.db)
     db = Database(db_path)
     record = get_by_id(db, args.session_id)
     db.close()
@@ -111,16 +125,15 @@ def cmd_show(args: argparse.Namespace) -> None:
     print("-" * 60)
     print(record['content'][:2000])
     if len(record['content']) > 2000:
-        print(f"\n... (共 {len(record['content'])} 字符)")
+        print(f"\n... (共 {len(record['content']):,} 字符)")
 
 
 def cmd_clean(args: argparse.Namespace) -> None:
     """clean 子命令"""
-    db_path = Path(args.db) if args.db else DEFAULT_DB
-    workspace = Path(args.path) if args.path else DEFAULT_WORKSPACE
+    db_path = _resolve_db(args.db)
 
     with Database(db_path) as db:
-        indexer = Indexer(db, workspace)
+        indexer = Indexer(db, _resolve_path(args.path), verbose=False)
         removed = indexer.clean()
 
     print(f"清理完成：移除 {removed} 条不存在的记录")

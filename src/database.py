@@ -3,7 +3,8 @@
 import sqlite3
 from pathlib import Path
 
-# Schema 定义
+# Schema 定义 — 使用 FTS5 external content 模式
+# FTS 表 rowid = sessions.id，触发器自动同步
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS sessions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,28 +22,34 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(session_date);
 CREATE INDEX IF NOT EXISTS idx_sessions_hash ON sessions(content_hash);
 
+-- external content FTS5：rowid 直接引用 sessions.id
 CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
-    session_id,
     title,
     content,
-    tokenize='trigram'
+    session_id,
+    tokenize='trigram',
+    content='sessions',
+    content_rowid='id'
 );
 
+-- 插入同步
 CREATE TRIGGER IF NOT EXISTS sessions_ai AFTER INSERT ON sessions BEGIN
-    INSERT INTO sessions_fts(rowid, session_id, title, content)
-    VALUES (new.id, new.session_id, new.title, new.content);
+    INSERT INTO sessions_fts(rowid, title, content, session_id)
+    VALUES (new.id, new.title, new.content, new.session_id);
 END;
 
+-- 删除同步
 CREATE TRIGGER IF NOT EXISTS sessions_ad AFTER DELETE ON sessions BEGIN
-    INSERT INTO sessions_fts(sessions_fts, rowid, session_id, title, content)
-    VALUES ('delete', old.id, old.session_id, old.title, old.content);
+    INSERT INTO sessions_fts(sessions_fts, rowid, title, content, session_id)
+    VALUES ('delete', old.id, old.title, old.content, old.session_id);
 END;
 
+-- 更新同步
 CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE ON sessions BEGIN
-    INSERT INTO sessions_fts(sessions_fts, rowid, session_id, title, content)
-    VALUES ('delete', old.id, old.session_id, old.title, new.content);
-    INSERT INTO sessions_fts(rowid, session_id, title, content)
-    VALUES (new.id, new.session_id, new.title, new.content);
+    INSERT INTO sessions_fts(sessions_fts, rowid, title, content, session_id)
+    VALUES ('delete', old.id, old.title, old.content, old.session_id);
+    INSERT INTO sessions_fts(rowid, title, content, session_id)
+    VALUES (new.id, new.title, new.content, new.session_id);
 END;
 
 CREATE TABLE IF NOT EXISTS index_meta (
@@ -76,6 +83,10 @@ class Database:
 
     def commit(self) -> None:
         self.conn.commit()
+
+    def begin_batch(self) -> None:
+        """开启批量模式"""
+        self.conn.execute("BEGIN")
 
     def close(self) -> None:
         self.conn.close()
