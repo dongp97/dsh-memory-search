@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: dsh-memory-search
+Version: 1.0.0
+Summary: DSH 会话记忆智能检索工具 — 基于 SQLite FTS5 全文检索
+Author: dongp97
+Requires-Python: >=3.10
+Dynamic: author
+Dynamic: requires-python
+Dynamic: summary
